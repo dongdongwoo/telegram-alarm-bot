@@ -125,8 +125,9 @@ export class ScheduleBotUpdate {
 
   private formatDate(iso: string): string {
     const d = new Date(iso);
+    const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
     const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}`;
   }
 
   private truncate(str: string, max: number): string {

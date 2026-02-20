@@ -6,6 +6,7 @@ primary_region = 'nrt'
 [env]
   NODE_ENV = 'production'
   PORT = '3000'
+  TZ = 'Asia/Seoul'
 
 [http_service]
   internal_port = 3000
