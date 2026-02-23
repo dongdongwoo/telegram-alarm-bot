@@ -1,7 +1,7 @@
 import { Update, Command, Ctx } from 'nestjs-telegraf';
 import { Context } from 'telegraf';
 import { ScheduleService } from './schedule.service.js';
-import type { ScheduledNotification } from './interfaces/scheduled-notification.interface.js';
+import type { ScheduledNotificationEntity } from './entities/scheduled-notification.entity.js';
 
 @Update()
 export class ScheduleBotUpdate {
@@ -10,7 +10,7 @@ export class ScheduleBotUpdate {
   @Command('schedules')
   async onSchedules(@Ctx() ctx: Context): Promise<void> {
     const chatId = String(ctx.chat!.id);
-    const all = this.scheduleService.findAll(undefined, chatId);
+    const all = await this.scheduleService.findAll(undefined, chatId);
 
     if (all.length === 0) {
       await ctx.reply('📭 등록된 알림 스케줄이 없습니다.');
@@ -38,7 +38,7 @@ export class ScheduleBotUpdate {
   @Command('fixed')
   async onFixed(@Ctx() ctx: Context): Promise<void> {
     const chatId = String(ctx.chat!.id);
-    const fixed = this.scheduleService.findAll('fixed', chatId);
+    const fixed = await this.scheduleService.findAll('fixed', chatId);
 
     if (fixed.length === 0) {
       await ctx.reply('📭 등록된 고정 반복 알림이 없습니다.');
@@ -54,7 +54,7 @@ export class ScheduleBotUpdate {
   @Command('manual')
   async onManual(@Ctx() ctx: Context): Promise<void> {
     const chatId = String(ctx.chat!.id);
-    const manual = this.scheduleService.findAll('manual', chatId);
+    const manual = await this.scheduleService.findAll('manual', chatId);
 
     if (manual.length === 0) {
       await ctx.reply('📭 등록된 수동 알림이 없습니다.');
@@ -67,7 +67,7 @@ export class ScheduleBotUpdate {
     await ctx.reply(text, { parse_mode: 'HTML' });
   }
 
-  private formatList(schedules: ScheduledNotification[]): string {
+  private formatList(schedules: ScheduledNotificationEntity[]): string {
     return schedules
       .map((s) => {
         const status = s.enabled ? '✅' : '⏸';
@@ -123,9 +123,8 @@ export class ScheduleBotUpdate {
     return name ? `매주 ${name}요일` : field;
   }
 
-  private formatDate(iso: string): string {
-    const d = new Date(iso);
-    const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  private formatDate(date: Date): string {
+    const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}`;
   }

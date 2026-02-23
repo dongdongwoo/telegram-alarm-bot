@@ -6,7 +6,7 @@ import {
   IsString,
   ValidateIf,
 } from 'class-validator';
-import type { ScheduleType } from '../../schedule/interfaces/scheduled-notification.interface.js';
+type ScheduleType = 'fixed' | 'manual';
 
 export class CreateScheduleDto {
   @ApiProperty({

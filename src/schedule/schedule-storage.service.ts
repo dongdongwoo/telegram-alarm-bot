@@ -1,83 +1,56 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { ScheduledNotification } from './interfaces/scheduled-notification.interface.js';
-
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const FILE_PATH = path.join(DATA_DIR, 'schedules.json');
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { ScheduledNotificationEntity } from './entities/scheduled-notification.entity.js';
 
 @Injectable()
 export class ScheduleStorageService {
   private readonly logger = new Logger(ScheduleStorageService.name);
-  private schedules: ScheduledNotification[] = [];
 
-  constructor() {
-    this.loadFromFile();
+  constructor(
+    @InjectRepository(ScheduledNotificationEntity)
+    private readonly repo: Repository<ScheduledNotificationEntity>,
+  ) {}
+
+  async findAll(): Promise<ScheduledNotificationEntity[]> {
+    return this.repo.find({ order: { createdAt: 'ASC' } });
   }
 
-  private loadFromFile(): void {
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      if (fs.existsSync(FILE_PATH)) {
-        const raw = fs.readFileSync(FILE_PATH, 'utf-8');
-        this.schedules = JSON.parse(raw) as ScheduledNotification[];
-        this.logger.log(`Loaded ${this.schedules.length} schedules from file`);
-      } else {
-        this.schedules = [];
-        this.saveToFile();
-      }
-    } catch (error) {
-      this.logger.error('Failed to load schedules from file', error);
-      this.schedules = [];
-    }
+  async findById(id: string): Promise<ScheduledNotificationEntity | null> {
+    return this.repo.findOneBy({ id });
   }
 
-  private saveToFile(): void {
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      fs.writeFileSync(FILE_PATH, JSON.stringify(this.schedules, null, 2));
-    } catch (error) {
-      this.logger.error('Failed to save schedules to file', error);
-    }
+  async create(
+    data: Partial<ScheduledNotificationEntity>,
+  ): Promise<ScheduledNotificationEntity> {
+    const entity = this.repo.create(data);
+    const saved = await this.repo.save(entity);
+    this.logger.debug(`[STORAGE] Created: "${saved.name}" (${saved.id})`);
+    return saved;
   }
 
-  findAll(): ScheduledNotification[] {
-    return [...this.schedules];
-  }
-
-  findById(id: string): ScheduledNotification | undefined {
-    return this.schedules.find((s) => s.id === id);
-  }
-
-  create(schedule: ScheduledNotification): ScheduledNotification {
-    this.schedules.push(schedule);
-    this.saveToFile();
-    return schedule;
-  }
-
-  update(
+  async update(
     id: string,
-    partial: Partial<ScheduledNotification>,
-  ): ScheduledNotification | undefined {
-    const index = this.schedules.findIndex((s) => s.id === id);
-    if (index === -1) return undefined;
-
-    this.schedules[index] = { ...this.schedules[index], ...partial };
-    this.saveToFile();
-    return this.schedules[index];
+    partial: Partial<ScheduledNotificationEntity>,
+  ): Promise<ScheduledNotificationEntity | null> {
+    await this.repo.update(id, partial);
+    const updated = await this.repo.findOneBy({ id });
+    if (updated) {
+      this.logger.debug(`[STORAGE] Updated: "${updated.name}" (${id})`);
+    } else {
+      this.logger.warn(`[STORAGE] Update target not found: ${id}`);
+    }
+    return updated;
   }
 
-  delete(id: string): boolean {
-    const before = this.schedules.length;
-    this.schedules = this.schedules.filter((s) => s.id !== id);
-    if (this.schedules.length < before) {
-      this.saveToFile();
-      return true;
+  async delete(id: string): Promise<boolean> {
+    const result = await this.repo.delete(id);
+    const deleted = (result.affected ?? 0) > 0;
+    if (deleted) {
+      this.logger.debug(`[STORAGE] Deleted: ${id}`);
+    } else {
+      this.logger.warn(`[STORAGE] Delete target not found: ${id}`);
     }
-    return false;
+    return deleted;
   }
 }

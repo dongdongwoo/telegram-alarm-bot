@@ -21,13 +21,19 @@ export class NotificationService {
     dto: SendMessageDto,
   ): Promise<{ success: boolean; chatId: string }> {
     const chatId = dto.chatId || this.defaultChatId;
+    this.logger.log(
+      `[SEND] Sending to chatId: ${chatId}, message: "${dto.message.slice(0, 80)}"`,
+    );
 
     try {
       await this.botService.sendMessage(chatId, dto.message);
-      this.logger.log(`Message sent to chat ${chatId}`);
+      this.logger.log(`[SEND OK] chatId: ${chatId}`);
       return { success: true, chatId };
     } catch (error) {
-      this.logger.error(`Failed to send message to chat ${chatId}`, error);
+      this.logger.error(
+        `[SEND FAIL] chatId: ${chatId}`,
+        (error as Error).stack,
+      );
       throw error;
     }
   }

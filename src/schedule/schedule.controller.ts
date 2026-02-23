@@ -26,7 +26,7 @@ export class ScheduleController {
   })
   @ApiResponse({ status: 201, description: '스케줄 등록 성공' })
   @ApiResponse({ status: 400, description: '잘못된 요청' })
-  create(@Body() dto: CreateScheduleDto) {
+  async create(@Body() dto: CreateScheduleDto) {
     return this.scheduleService.create(dto);
   }
 
@@ -48,7 +48,10 @@ export class ScheduleController {
     description: 'Chat ID 필터 (미입력 시 전체)',
   })
   @ApiResponse({ status: 200, description: '스케줄 목록' })
-  findAll(@Query('type') type?: string, @Query('chatId') chatId?: string) {
+  async findAll(
+    @Query('type') type?: string,
+    @Query('chatId') chatId?: string,
+  ) {
     return this.scheduleService.findAll(type, chatId);
   }
 
@@ -56,7 +59,7 @@ export class ScheduleController {
   @ApiOperation({ summary: '알림 스케줄 상세 조회' })
   @ApiResponse({ status: 200, description: '스케줄 상세 정보' })
   @ApiResponse({ status: 404, description: '스케줄을 찾을 수 없음' })
-  findOne(@Param('id') id: string) {
+  async findOne(@Param('id') id: string) {
     return this.scheduleService.findById(id);
   }
 
@@ -67,7 +70,7 @@ export class ScheduleController {
   })
   @ApiResponse({ status: 200, description: '수정 성공' })
   @ApiResponse({ status: 404, description: '스케줄을 찾을 수 없음' })
-  update(@Param('id') id: string, @Body() dto: UpdateScheduleDto) {
+  async update(@Param('id') id: string, @Body() dto: UpdateScheduleDto) {
     return this.scheduleService.update(id, dto);
   }
 
@@ -75,8 +78,8 @@ export class ScheduleController {
   @ApiOperation({ summary: '알림 스케줄 삭제' })
   @ApiResponse({ status: 200, description: '삭제 성공' })
   @ApiResponse({ status: 404, description: '스케줄을 찾을 수 없음' })
-  remove(@Param('id') id: string) {
-    this.scheduleService.delete(id);
+  async remove(@Param('id') id: string) {
+    await this.scheduleService.delete(id);
     return { success: true, message: `스케줄 ${id} 삭제 완료` };
   }
 
@@ -87,7 +90,7 @@ export class ScheduleController {
   })
   @ApiResponse({ status: 200, description: '토글 성공' })
   @ApiResponse({ status: 404, description: '스케줄을 찾을 수 없음' })
-  toggle(@Param('id') id: string) {
+  async toggle(@Param('id') id: string) {
     return this.scheduleService.toggleEnabled(id);
   }
 }

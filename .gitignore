@@ -39,9 +39,6 @@ Thumbs.db
 # IDE - Cursor
 .cursor/mcp.json
 
-# Data files (schedule storage)
-/data
-
 # dotenv environment variable files
 .env
 .env.*

@@ -1,13 +1,19 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule as NestScheduleModule } from '@nestjs/schedule';
 import { ScheduleController } from './schedule.controller.js';
 import { ScheduleService } from './schedule.service.js';
 import { ScheduleStorageService } from './schedule-storage.service.js';
 import { ScheduleBotUpdate } from './schedule-bot.update.js';
+import { ScheduledNotificationEntity } from './entities/scheduled-notification.entity.js';
 import { BotModule } from '../bot/bot.module.js';
 
 @Module({
-  imports: [NestScheduleModule.forRoot(), BotModule],
+  imports: [
+    TypeOrmModule.forFeature([ScheduledNotificationEntity]),
+    NestScheduleModule.forRoot(),
+    BotModule,
+  ],
   controllers: [ScheduleController],
   providers: [ScheduleService, ScheduleStorageService, ScheduleBotUpdate],
   exports: [ScheduleService],

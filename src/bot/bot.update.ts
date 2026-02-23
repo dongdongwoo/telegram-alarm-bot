@@ -57,7 +57,6 @@ export class BotUpdate {
       `👋 안녕하세요! 알림봇입니다.\n\n` +
         `📌 이 봇은 API를 통해 알림 메시지를 전송하는 봇입니다.\n\n` +
         `🔑 당신의 Chat ID: <code>${chatId}</code>\n` +
-        `이 Chat ID를 .env 파일의 TELEGRAM_DEFAULT_CHAT_ID에 설정하세요.\n\n` +
         `/help 명령어로 사용 가능한 명령어를 확인하세요.`,
       { parse_mode: 'HTML' },
     );
@@ -76,10 +75,7 @@ export class BotUpdate {
           ? `\n💡 그룹에서는 <code>${tag} 명령어</code> 형식으로 입력하세요.\n`
           : '') +
         `\n<b>🔧 기본</b>\n` +
-        `${prefix}start - 봇 시작 및 Chat ID 확인\n` +
         `${prefix}help - 도움말\n` +
-        `${prefix}chatid - 현재 Chat ID 확인\n` +
-        `${prefix}ping - 봇 상태 확인\n\n` +
         `<b>📋 스케줄 관리</b>\n` +
         `${prefix}schedules - 전체 알림 스케줄 목록\n` +
         `${prefix}fixed - 고정 반복 알림 목록\n` +

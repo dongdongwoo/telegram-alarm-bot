@@ -8,21 +8,18 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CronJob } from 'cron';
-import { v4 as uuidv4 } from 'uuid';
 import { BotService } from '../bot/bot.service.js';
 import { ScheduleStorageService } from './schedule-storage.service.js';
 import { CreateScheduleDto } from '../common/dto/create-schedule.dto.js';
 import { UpdateScheduleDto } from '../common/dto/update-schedule.dto.js';
-import type { ScheduledNotification } from './interfaces/scheduled-notification.interface.js';
+import { ScheduledNotificationEntity } from './entities/scheduled-notification.entity.js';
 
 @Injectable()
 export class ScheduleService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ScheduleService.name);
   private readonly defaultChatId: string;
 
-  /** 활성화된 CronJob 인스턴스 (fixed 타입) */
   private cronJobs = new Map<string, CronJob>();
-  /** 활성화된 setTimeout 타이머 (manual 타입) */
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
@@ -33,55 +30,74 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
     this.defaultChatId = this.configService.getOrThrow<string>(
       'TELEGRAM_DEFAULT_CHAT_ID',
     );
+    this.logger.log(`Default chatId: ${this.defaultChatId}`);
   }
 
-  onModuleInit() {
-    this.restoreSchedules();
+  async onModuleInit() {
+    await this.restoreSchedules();
   }
 
   onModuleDestroy() {
     this.clearAllJobs();
   }
 
-  /** 서버 시작 시 파일에서 스케줄 복원 */
-  private restoreSchedules(): void {
-    const schedules = this.storage.findAll();
+  private async restoreSchedules(): Promise<void> {
+    const schedules = await this.storage.findAll();
+    this.logger.log(`Found ${schedules.length} total schedules in DB`);
     let restored = 0;
+    let skipped = 0;
+    let expired = 0;
 
     for (const schedule of schedules) {
-      if (!schedule.enabled) continue;
+      if (!schedule.enabled) {
+        this.logger.debug(`Skip disabled: "${schedule.name}" (${schedule.id})`);
+        skipped++;
+        continue;
+      }
 
       if (schedule.type === 'fixed') {
         this.startCronJob(schedule);
         restored++;
       } else if (schedule.type === 'manual') {
-        const scheduledTime = new Date(schedule.scheduledAt!).getTime();
+        const scheduledTime = schedule.scheduledAt!.getTime();
         if (scheduledTime > Date.now()) {
           this.startTimer(schedule);
           restored++;
         } else {
-          this.storage.update(schedule.id, { enabled: false });
+          await this.storage.update(schedule.id, { enabled: false });
+          this.logger.warn(
+            `Expired manual schedule disabled: "${schedule.name}"`,
+          );
+          expired++;
         }
       }
     }
 
-    this.logger.log(`Restored ${restored} active schedules`);
+    this.logger.log(
+      `Restore complete: ${restored} active, ${skipped} disabled, ${expired} expired`,
+    );
   }
 
   private clearAllJobs(): void {
+    const cronCount = this.cronJobs.size;
+    const timerCount = this.timers.size;
     for (const job of this.cronJobs.values()) void job.stop();
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.cronJobs.clear();
     this.timers.clear();
+    this.logger.log(`Cleared all jobs: ${cronCount} cron, ${timerCount} timer`);
   }
 
   private static readonly TIMEZONE = 'Asia/Seoul';
 
-  private startCronJob(schedule: ScheduledNotification): void {
+  private startCronJob(schedule: ScheduledNotificationEntity): void {
     try {
       const job = new CronJob(
         schedule.cron!,
         async () => {
+          this.logger.log(
+            `[CRON FIRE] "${schedule.name}" → chatId: ${schedule.chatId}`,
+          );
           await this.sendScheduledMessage(schedule);
         },
         null,
@@ -89,30 +105,41 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
         ScheduleService.TIMEZONE,
       );
       this.cronJobs.set(schedule.id, job);
-      this.logger.log(`CronJob started: "${schedule.name}" [${schedule.cron}]`);
+      this.logger.log(
+        `[CRON START] "${schedule.name}" [${schedule.cron}] → chatId: ${schedule.chatId}`,
+      );
     } catch (error) {
       this.logger.error(
-        `Failed to start CronJob for "${schedule.name}"`,
-        error,
+        `[CRON FAIL] "${schedule.name}" [${schedule.cron}] failed to start`,
+        (error as Error).stack,
       );
     }
   }
 
-  private startTimer(schedule: ScheduledNotification): void {
-    const delay = new Date(schedule.scheduledAt!).getTime() - Date.now();
-    if (delay <= 0) return;
+  private startTimer(schedule: ScheduledNotificationEntity): void {
+    const delay = schedule.scheduledAt!.getTime() - Date.now();
+    if (delay <= 0) {
+      this.logger.warn(
+        `[TIMER SKIP] "${schedule.name}" scheduledAt already passed`,
+      );
+      return;
+    }
 
+    const delayMin = Math.round(delay / 60000);
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     const timer = setTimeout(async () => {
+      this.logger.log(
+        `[TIMER FIRE] "${schedule.name}" → chatId: ${schedule.chatId}`,
+      );
       await this.sendScheduledMessage(schedule);
-      this.storage.update(schedule.id, { enabled: false });
+      await this.storage.update(schedule.id, { enabled: false });
       this.timers.delete(schedule.id);
-      this.logger.log(`Manual schedule fired and disabled: "${schedule.name}"`);
+      this.logger.log(`[TIMER DONE] "${schedule.name}" fired and disabled`);
     }, delay);
 
     this.timers.set(schedule.id, timer);
     this.logger.log(
-      `Timer started: "${schedule.name}" fires at ${schedule.scheduledAt}`,
+      `[TIMER START] "${schedule.name}" fires at ${schedule.scheduledAt!.toISOString()} (in ${delayMin}min) → chatId: ${schedule.chatId}`,
     );
   }
 
@@ -121,54 +148,58 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
     if (cronJob) {
       void cronJob.stop();
       this.cronJobs.delete(id);
+      this.logger.debug(`[CRON STOP] id: ${id}`);
     }
     const timer = this.timers.get(id);
     if (timer) {
       clearTimeout(timer);
       this.timers.delete(id);
+      this.logger.debug(`[TIMER STOP] id: ${id}`);
     }
   }
 
   private async sendScheduledMessage(
-    schedule: ScheduledNotification,
+    schedule: ScheduledNotificationEntity,
   ): Promise<void> {
+    const chatId = schedule.chatId || this.defaultChatId;
     try {
-      const chatId = schedule.chatId || this.defaultChatId;
       await this.botService.sendMessage(chatId, schedule.message);
-      this.logger.log(`Notification sent: "${schedule.name}" → ${chatId}`);
+      this.logger.log(`[SEND OK] "${schedule.name}" → chatId: ${chatId}`);
     } catch (error) {
       this.logger.error(
-        `Failed to send notification: "${schedule.name}"`,
-        error,
+        `[SEND FAIL] "${schedule.name}" → chatId: ${chatId}`,
+        (error as Error).stack,
       );
     }
   }
 
   // ─── CRUD ──────────────────────────────────────────
 
-  create(dto: CreateScheduleDto): ScheduledNotification {
+  async create(dto: CreateScheduleDto): Promise<ScheduledNotificationEntity> {
+    this.logger.log(
+      `[CREATE] type: ${dto.type}, name: "${dto.name}", chatId: ${dto.chatId || this.defaultChatId}`,
+    );
+
     if (dto.type === 'manual' && dto.scheduledAt) {
-      const time = new Date(dto.scheduledAt).getTime();
-      if (time <= Date.now()) {
+      if (new Date(dto.scheduledAt).getTime() <= Date.now()) {
+        this.logger.warn(
+          `[CREATE REJECT] "${dto.name}" scheduledAt is in the past: ${dto.scheduledAt}`,
+        );
         throw new BadRequestException(
           '수동 알림의 예정 시각은 현재 시각보다 미래여야 합니다.',
         );
       }
     }
 
-    const schedule: ScheduledNotification = {
-      id: uuidv4(),
+    const schedule = await this.storage.create({
       type: dto.type,
       name: dto.name,
       message: dto.message,
       chatId: dto.chatId || this.defaultChatId,
       enabled: true,
-      createdAt: new Date().toISOString(),
-      cron: dto.cron,
-      scheduledAt: dto.scheduledAt,
-    };
-
-    this.storage.create(schedule);
+      cron: dto.cron ?? null,
+      scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
+    });
 
     if (schedule.type === 'fixed') {
       this.startCronJob(schedule);
@@ -176,36 +207,55 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       this.startTimer(schedule);
     }
 
+    this.logger.log(`[CREATE OK] "${schedule.name}" id: ${schedule.id}`);
     return schedule;
   }
 
-  findAll(type?: string, chatId?: string): ScheduledNotification[] {
-    const all = this.storage.findAll();
+  async findAll(
+    type?: string,
+    chatId?: string,
+  ): Promise<ScheduledNotificationEntity[]> {
+    const all = await this.storage.findAll();
 
-    return all.filter((s) => {
+    const filtered = all.filter((s) => {
       if (chatId && s.chatId !== chatId) return false;
       if (type && s.type !== type) return false;
       if (s.type === 'manual' && !s.enabled) {
-        const scheduledTime = new Date(s.scheduledAt!).getTime();
-        if (scheduledTime <= Date.now()) return false;
+        if (s.scheduledAt && s.scheduledAt.getTime() <= Date.now())
+          return false;
       }
       return true;
     });
+
+    this.logger.debug(
+      `[FIND ALL] total: ${all.length}, filtered: ${filtered.length} (type: ${type ?? 'all'}, chatId: ${chatId ?? 'any'})`,
+    );
+    return filtered;
   }
 
-  findById(id: string): ScheduledNotification {
-    const schedule = this.storage.findById(id);
-    if (!schedule)
+  async findById(id: string): Promise<ScheduledNotificationEntity> {
+    const schedule = await this.storage.findById(id);
+    if (!schedule) {
+      this.logger.warn(`[FIND] Not found: ${id}`);
       throw new NotFoundException(`스케줄 ${id}을(를) 찾을 수 없습니다.`);
+    }
     return schedule;
   }
 
-  update(id: string, dto: UpdateScheduleDto): ScheduledNotification {
-    const existing = this.findById(id);
+  async update(
+    id: string,
+    dto: UpdateScheduleDto,
+  ): Promise<ScheduledNotificationEntity> {
+    const existing = await this.findById(id);
+    this.logger.log(
+      `[UPDATE] "${existing.name}" (${id}) → ${JSON.stringify(dto)}`,
+    );
 
     if (dto.scheduledAt && existing.type === 'manual') {
-      const time = new Date(dto.scheduledAt).getTime();
-      if (time <= Date.now()) {
+      if (new Date(dto.scheduledAt).getTime() <= Date.now()) {
+        this.logger.warn(
+          `[UPDATE REJECT] "${existing.name}" scheduledAt is in the past: ${dto.scheduledAt}`,
+        );
         throw new BadRequestException(
           '수동 알림의 예정 시각은 현재 시각보다 미래여야 합니다.',
         );
@@ -214,7 +264,13 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
 
     this.stopJob(id);
 
-    const updated = this.storage.update(id, dto);
+    const { scheduledAt, ...rest } = dto;
+    const updateData: Partial<ScheduledNotificationEntity> = {
+      ...rest,
+      ...(scheduledAt !== undefined && { scheduledAt: new Date(scheduledAt) }),
+    };
+
+    const updated = await this.storage.update(id, updateData);
     if (!updated)
       throw new NotFoundException(`스케줄 ${id}을(를) 찾을 수 없습니다.`);
 
@@ -222,27 +278,34 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       if (updated.type === 'fixed') {
         this.startCronJob(updated);
       } else if (updated.type === 'manual') {
-        const scheduledTime = new Date(updated.scheduledAt!).getTime();
-        if (scheduledTime > Date.now()) {
+        if (updated.scheduledAt && updated.scheduledAt.getTime() > Date.now()) {
           this.startTimer(updated);
         } else {
-          this.storage.update(id, { enabled: false });
+          await this.storage.update(id, { enabled: false });
+          this.logger.warn(
+            `[UPDATE] "${updated.name}" auto-disabled (past scheduledAt)`,
+          );
         }
       }
     }
 
+    this.logger.log(`[UPDATE OK] "${updated.name}" (${id})`);
     return updated;
   }
 
-  delete(id: string): void {
-    this.findById(id);
+  async delete(id: string): Promise<void> {
+    const schedule = await this.findById(id);
     this.stopJob(id);
-    this.storage.delete(id);
+    await this.storage.delete(id);
+    this.logger.log(`[DELETE OK] "${schedule.name}" (${id})`);
   }
 
-  toggleEnabled(id: string): ScheduledNotification {
-    const schedule = this.findById(id);
+  async toggleEnabled(id: string): Promise<ScheduledNotificationEntity> {
+    const schedule = await this.findById(id);
     const newEnabled = !schedule.enabled;
+    this.logger.log(
+      `[TOGGLE] "${schedule.name}" (${id}) ${schedule.enabled} → ${newEnabled}`,
+    );
 
     this.stopJob(id);
 
@@ -250,8 +313,13 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       if (schedule.type === 'fixed') {
         this.startCronJob(schedule);
       } else if (schedule.type === 'manual') {
-        const scheduledTime = new Date(schedule.scheduledAt!).getTime();
-        if (scheduledTime <= Date.now()) {
+        if (
+          !schedule.scheduledAt ||
+          schedule.scheduledAt.getTime() <= Date.now()
+        ) {
+          this.logger.warn(
+            `[TOGGLE REJECT] "${schedule.name}" cannot re-enable past manual schedule`,
+          );
           throw new BadRequestException(
             '이미 시간이 지난 수동 알림은 다시 활성화할 수 없습니다.',
           );
@@ -260,6 +328,10 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    return this.storage.update(id, { enabled: newEnabled })!;
+    const result = await this.storage.update(id, { enabled: newEnabled });
+    this.logger.log(
+      `[TOGGLE OK] "${schedule.name}" now ${newEnabled ? 'enabled' : 'disabled'}`,
+    );
+    return result!;
   }
 }
