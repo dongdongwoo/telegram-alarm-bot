@@ -79,7 +79,7 @@ export class BotUpdate {
         `<b>📋 스케줄 관리</b>\n` +
         `${prefix}schedules - 전체 알림 스케줄 목록\n` +
         `${prefix}fixed - 고정 반복 알림 목록\n` +
-        `${prefix}manual - 수동 일회성 알림 목록`,
+        `${prefix}manual - 일회성 알림 목록`,
       { parse_mode: 'HTML' },
     );
   }

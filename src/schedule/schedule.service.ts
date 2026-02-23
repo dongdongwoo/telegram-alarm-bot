@@ -33,12 +33,16 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Default chatId: ${this.defaultChatId}`);
   }
 
+  private dailySummaryJob: CronJob | null = null;
+
   async onModuleInit() {
     await this.restoreSchedules();
+    this.startDailySummary();
   }
 
   onModuleDestroy() {
     this.clearAllJobs();
+    void this.dailySummaryJob?.stop();
   }
 
   private async restoreSchedules(): Promise<void> {
@@ -173,6 +177,169 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  // ─── DAILY SUMMARY ────────────────────────────────────
+
+  private startDailySummary(): void {
+    this.dailySummaryJob = new CronJob(
+      '0 8 * * *',
+      async () => {
+        this.logger.log('[DAILY SUMMARY] Triggered at 08:00 KST');
+        await this.sendDailySummary();
+      },
+      null,
+      true,
+      ScheduleService.TIMEZONE,
+    );
+    this.logger.log('[DAILY SUMMARY] Registered cron: 0 8 * * * (KST)');
+  }
+
+  private async sendDailySummary(): Promise<void> {
+    const all = await this.storage.findAll();
+    const enabled = all.filter((s) => s.enabled);
+
+    const byChatId = new Map<string, ScheduledNotificationEntity[]>();
+    for (const s of enabled) {
+      const chatId = s.chatId || this.defaultChatId;
+      if (!byChatId.has(chatId)) byChatId.set(chatId, []);
+      byChatId.get(chatId)!.push(s);
+    }
+
+    const now = new Date();
+    const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const todayDow = kstNow.getUTCDay();
+    const todayDate = kstNow.getUTCDate();
+    const todayMonth = kstNow.getUTCMonth() + 1;
+
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const dateHeader = `${kstNow.getUTCFullYear()}-${pad(todayMonth)}-${pad(todayDate)} (${dayNames[todayDow]})`;
+
+    for (const [chatId, schedules] of byChatId) {
+      const todayItems: { name: string; time: string; message: string }[] = [];
+
+      for (const s of schedules) {
+        if (s.type === 'fixed' && s.cron) {
+          if (this.cronMatchesToday(s.cron, todayDow, todayDate, todayMonth)) {
+            const parts = s.cron.trim().split(/\s+/);
+            const hour = Number(parts[1]);
+            const minute = Number(parts[0]);
+            const ampm = hour < 12 ? '오전' : '오후';
+            const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+            todayItems.push({
+              name: s.name,
+              time: `${ampm} ${h12}:${pad(minute)}`,
+              message: this.truncateStr(s.message, 40),
+            });
+          }
+        } else if (s.type === 'manual' && s.scheduledAt) {
+          const kstScheduled = new Date(
+            s.scheduledAt.getTime() + 9 * 60 * 60 * 1000,
+          );
+          if (
+            kstScheduled.getUTCFullYear() === kstNow.getUTCFullYear() &&
+            kstScheduled.getUTCMonth() === kstNow.getUTCMonth() &&
+            kstScheduled.getUTCDate() === kstNow.getUTCDate()
+          ) {
+            const hour = kstScheduled.getUTCHours();
+            const minute = kstScheduled.getUTCMinutes();
+            const ampm = hour < 12 ? '오전' : '오후';
+            const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+            todayItems.push({
+              name: s.name,
+              time: `${ampm} ${h12}:${pad(minute)}`,
+              message: this.truncateStr(s.message, 40),
+            });
+          }
+        }
+      }
+
+      if (todayItems.length === 0) continue;
+
+      todayItems.sort((a, b) => a.time.localeCompare(b.time));
+
+      let text = `📆 <b>오늘의 알림 요약</b>\n`;
+      text += `📅 ${dateHeader}\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      text += todayItems
+        .map(
+          (item, i) =>
+            `${i + 1}. <b>${item.name}</b>\n   ⏰ ${item.time}\n   💬 ${item.message}`,
+        )
+        .join('\n\n');
+
+      text += `\n\n━━━━━━━━━━━━━━━━━━━━\n총 <b>${todayItems.length}건</b>의 알림이 예정되어 있습니다.`;
+
+      try {
+        await this.botService.sendMessage(chatId, text);
+        this.logger.log(
+          `[DAILY SUMMARY] Sent to chatId: ${chatId} (${todayItems.length} items)`,
+        );
+      } catch (error) {
+        this.logger.error(
+          `[DAILY SUMMARY] Failed to send to chatId: ${chatId}`,
+          (error as Error).stack,
+        );
+      }
+    }
+  }
+
+  private cronMatchesToday(
+    cron: string,
+    todayDow: number,
+    todayDate: number,
+    todayMonth: number,
+  ): boolean {
+    const parts = cron.trim().split(/\s+/);
+    if (parts.length < 5) return false;
+
+    const [, , dayOfMonth, month, dayOfWeek] = parts;
+
+    if (!this.cronFieldMatches(month, todayMonth)) return false;
+    if (!this.cronFieldMatches(dayOfMonth, todayDate)) return false;
+    if (!this.cronDowMatches(dayOfWeek, todayDow)) return false;
+
+    return true;
+  }
+
+  private cronFieldMatches(field: string, value: number): boolean {
+    if (field === '*') return true;
+
+    for (const part of field.split(',')) {
+      if (part.includes('/')) {
+        const [range, stepStr] = part.split('/');
+        const step = Number(stepStr);
+        if (range === '*' && value % step === 0) return true;
+      } else if (part.includes('-')) {
+        const [start, end] = part.split('-').map(Number);
+        if (value >= start && value <= end) return true;
+      } else {
+        if (Number(part) === value) return true;
+      }
+    }
+    return false;
+  }
+
+  private cronDowMatches(field: string, todayDow: number): boolean {
+    if (field === '*') return true;
+
+    for (const part of field.split(',')) {
+      if (part.includes('-')) {
+        const [start, end] = part.split('-').map(Number);
+        if (todayDow >= start && todayDow <= end) return true;
+      } else {
+        const val = Number(part);
+        if (val === todayDow || (val === 7 && todayDow === 0)) return true;
+      }
+    }
+    return false;
+  }
+
+  private truncateStr(str: string, max: number): string {
+    const oneLine = str.replace(/\n/g, ' ');
+    return oneLine.length > max ? oneLine.slice(0, max) + '…' : oneLine;
+  }
+
   // ─── CRUD ──────────────────────────────────────────
 
   async create(dto: CreateScheduleDto): Promise<ScheduledNotificationEntity> {
@@ -220,9 +387,12 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
     const filtered = all.filter((s) => {
       if (chatId && s.chatId !== chatId) return false;
       if (type && s.type !== type) return false;
-      if (s.type === 'manual' && !s.enabled) {
-        if (s.scheduledAt && s.scheduledAt.getTime() <= Date.now())
-          return false;
+      if (
+        s.type === 'manual' &&
+        s.scheduledAt &&
+        s.scheduledAt.getTime() <= Date.now()
+      ) {
+        return false;
       }
       return true;
     });

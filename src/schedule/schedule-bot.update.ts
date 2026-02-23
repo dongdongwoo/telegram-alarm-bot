@@ -28,7 +28,7 @@ export class ScheduleBotUpdate {
     }
 
     if (manual.length > 0) {
-      text += `\n\n━━━━━━━━━━━━━━━━━━━━\n📌 <b>수동 알림</b> (${manual.length}개)\n━━━━━━━━━━━━━━━━━━━━\n\n`;
+      text += `\n\n━━━━━━━━━━━━━━━━━━━━\n📌 <b>일회성 알림</b> (${manual.length}개)\n━━━━━━━━━━━━━━━━━━━━\n\n`;
       text += this.formatList(manual);
     }
 
@@ -57,11 +57,11 @@ export class ScheduleBotUpdate {
     const manual = await this.scheduleService.findAll('manual', chatId);
 
     if (manual.length === 0) {
-      await ctx.reply('📭 등록된 수동 알림이 없습니다.');
+      await ctx.reply('📭 등록된 일회성 알림이 없습니다.');
       return;
     }
 
-    let text = `📌 <b>수동 알림 목록</b> (${manual.length}개)\n`;
+    let text = `📌 <b>일회성 알림 목록</b> (${manual.length}개)\n`;
     text += this.formatList(manual);
 
     await ctx.reply(text, { parse_mode: 'HTML' });
@@ -71,10 +71,16 @@ export class ScheduleBotUpdate {
     return schedules
       .map((s) => {
         const status = s.enabled ? '✅' : '⏸';
-        const time =
-          s.type === 'fixed'
-            ? `⏰ ${this.describeCron(s.cron!)}`
-            : `📅 ${this.formatDate(s.scheduledAt!)}`;
+        let time: string;
+        if (s.type === 'fixed') {
+          time = `⏰ ${this.describeCron(s.cron!)}`;
+        } else {
+          const dateStr = this.formatDate(s.scheduledAt!);
+          const remaining = this.formatRemaining(s.scheduledAt!);
+          time = remaining
+            ? `📅 ${dateStr}\n   ⏳ ${remaining}`
+            : `📅 ${dateStr}`;
+        }
         return `${status} <b>${s.name}</b>\n   ${time}\n   💬 ${this.truncate(s.message, 50)}`;
       })
       .join('\n\n');
@@ -126,7 +132,34 @@ export class ScheduleBotUpdate {
   private formatDate(date: Date): string {
     const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
     const pad = (n: number) => String(n).padStart(2, '0');
-    return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}`;
+
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    const day = dayNames[kst.getUTCDay()];
+
+    const hour = kst.getUTCHours();
+    const ampm = hour < 12 ? '오전' : '오후';
+    const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+    const minute = kst.getUTCMinutes();
+
+    return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} (${day}) ${ampm} ${h12}:${pad(minute)}`;
+  }
+
+  private formatRemaining(date: Date): string | null {
+    const now = new Date();
+    const diff = date.getTime() - now.getTime();
+    if (diff <= 0) return null;
+
+    const totalMinutes = Math.floor(diff / 60_000);
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+
+    const parts: string[] = [];
+    if (days > 0) parts.push(`${days}일`);
+    if (hours > 0) parts.push(`${hours}시간`);
+    if (minutes > 0 && days === 0) parts.push(`${minutes}분`);
+
+    return parts.length > 0 ? `${parts.join(' ')} 남음` : '곧 발송';
   }
 
   private truncate(str: string, max: number): string {
