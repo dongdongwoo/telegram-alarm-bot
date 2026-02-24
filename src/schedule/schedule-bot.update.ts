@@ -92,7 +92,10 @@ export class ScheduleBotUpdate {
 
     const [minute, hour, , , dayOfWeek] = parts;
 
-    const timeStr = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    const h = Number(hour);
+    const ampm = h < 12 ? '오전' : '오후';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    const timeStr = `${ampm} ${h12}:${minute.padStart(2, '0')}`;
     const dayStr = this.describeDayOfWeek(dayOfWeek);
 
     return `${dayStr} ${timeStr}`;
