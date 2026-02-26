@@ -36,7 +36,4 @@ export class ScheduledNotificationEntity {
 
   @Column({ type: 'varchar', length: 5, nullable: true })
   eventTime: string | null;
-
-  @Column({ type: 'text', nullable: true })
-  description: string | null;
 }

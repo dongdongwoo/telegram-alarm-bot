@@ -235,7 +235,7 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
               name: s.name,
               time: `${ampm} ${h12}:${pad(minute)}`,
               eventTime: s.eventTime,
-              message: this.truncateStr(s.description || s.message, 40),
+              message: this.truncateStr(s.message, 40),
             });
           }
         } else if (s.type === 'manual' && s.scheduledAt) {
@@ -251,14 +251,14 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
               name: s.name,
               time: `${ampm} ${h12}:${pad(minute)}`,
               eventTime: s.eventTime,
-              message: this.truncateStr(s.description || s.message, 40),
+              message: this.truncateStr(s.message, 40),
             });
           }
         } else if (s.type === 'event' && s.scheduledAt) {
           if (this.isDateToday(s.scheduledAt, kstNow)) {
             todayEvents.push({
               name: s.name,
-              message: this.truncateStr(s.description || s.message, 40),
+              message: this.truncateStr(s.message, 40),
             });
           }
         }
@@ -410,7 +410,6 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       cron: dto.cron ?? null,
       scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
       eventTime: (dto.eventTime as string) ?? null,
-      description: (dto.description as string) ?? null,
     });
 
     if (schedule.type === 'fixed') {

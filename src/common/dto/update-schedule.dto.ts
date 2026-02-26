@@ -48,12 +48,4 @@ export class UpdateScheduleDto {
   @IsString()
   @IsOptional()
   eventTime?: string;
-
-  @ApiPropertyOptional({
-    description: '목록/요약에 표시할 설명',
-    example: '주간회의 시간입니다.',
-  })
-  @IsString()
-  @IsOptional()
-  description?: string;
 }

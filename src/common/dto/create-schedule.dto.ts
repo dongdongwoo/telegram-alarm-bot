@@ -69,13 +69,4 @@ export class CreateScheduleDto {
   @IsString()
   @IsOptional()
   eventTime?: string;
-
-  @ApiPropertyOptional({
-    description:
-      '목록/요약에 표시할 설명. 미입력 시 message가 사용됨. 예: "주간회의 시간입니다."',
-    example: '주간회의 시간입니다.',
-  })
-  @IsString()
-  @IsOptional()
-  description?: string;
 }
