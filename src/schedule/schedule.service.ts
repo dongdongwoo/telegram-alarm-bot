@@ -215,7 +215,13 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
     const dateHeader = `${kstNow.getUTCFullYear()}-${pad(todayMonth)}-${pad(todayDate)} (${dayNames[todayDow]})`;
 
     for (const [chatId, schedules] of byChatId) {
-      const todayItems: { name: string; time: string; message: string }[] = [];
+      const todayAlarms: {
+        name: string;
+        time: string;
+        eventTime: string | null;
+        message: string;
+      }[] = [];
+      const todayEvents: { name: string; message: string }[] = [];
 
       for (const s of schedules) {
         if (s.type === 'fixed' && s.cron) {
@@ -225,55 +231,75 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
             const minute = Number(parts[0]);
             const ampm = hour < 12 ? '오전' : '오후';
             const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-            todayItems.push({
+            todayAlarms.push({
               name: s.name,
               time: `${ampm} ${h12}:${pad(minute)}`,
-              message: this.truncateStr(s.message, 40),
+              eventTime: s.eventTime,
+              message: this.truncateStr(s.description || s.message, 40),
             });
           }
         } else if (s.type === 'manual' && s.scheduledAt) {
-          const kstScheduled = new Date(
-            s.scheduledAt.getTime() + 9 * 60 * 60 * 1000,
-          );
-          if (
-            kstScheduled.getUTCFullYear() === kstNow.getUTCFullYear() &&
-            kstScheduled.getUTCMonth() === kstNow.getUTCMonth() &&
-            kstScheduled.getUTCDate() === kstNow.getUTCDate()
-          ) {
+          if (this.isDateToday(s.scheduledAt, kstNow)) {
+            const kstScheduled = new Date(
+              s.scheduledAt.getTime() + 9 * 60 * 60 * 1000,
+            );
             const hour = kstScheduled.getUTCHours();
             const minute = kstScheduled.getUTCMinutes();
             const ampm = hour < 12 ? '오전' : '오후';
             const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-            todayItems.push({
+            todayAlarms.push({
               name: s.name,
               time: `${ampm} ${h12}:${pad(minute)}`,
-              message: this.truncateStr(s.message, 40),
+              eventTime: s.eventTime,
+              message: this.truncateStr(s.description || s.message, 40),
+            });
+          }
+        } else if (s.type === 'event' && s.scheduledAt) {
+          if (this.isDateToday(s.scheduledAt, kstNow)) {
+            todayEvents.push({
+              name: s.name,
+              message: this.truncateStr(s.description || s.message, 40),
             });
           }
         }
       }
 
-      if (todayItems.length === 0) continue;
+      if (todayAlarms.length === 0 && todayEvents.length === 0) continue;
 
-      todayItems.sort((a, b) => a.time.localeCompare(b.time));
+      todayAlarms.sort((a, b) => a.time.localeCompare(b.time));
 
       let text = `📆 <b>오늘의 알림 요약</b>\n`;
       text += `📅 ${dateHeader}\n`;
-      text += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+      text += `━━━━━━━━━━━━━━━━━━━━\n`;
 
-      text += todayItems
-        .map(
-          (item, i) =>
-            `${i + 1}. <b>${item.name}</b>\n   ⏰ ${item.time}\n   💬 ${item.message}`,
-        )
-        .join('\n\n');
+      if (todayEvents.length > 0) {
+        text += `\n🗓 <b>오늘의 이벤트</b>\n\n`;
+        text += todayEvents.map((ev) => `📌 <b>${ev.name}</b>`).join('\n');
+        text += '\n';
+      }
 
-      text += `\n\n━━━━━━━━━━━━━━━━━━━━\n총 <b>${todayItems.length}건</b>의 알림이 예정되어 있습니다.`;
+      if (todayAlarms.length > 0) {
+        text += `\n🔔 <b>예정된 알림</b> (${todayAlarms.length}건)\n\n`;
+        text += todayAlarms
+          .map((item, i) => {
+            let line = `${i + 1}. <b>${item.name}</b>`;
+            if (item.eventTime) {
+              line += `\n   ⏰ ${this.formatHHmm(item.eventTime)}`;
+            } else {
+              line += `\n   ⏰ ${item.time}`;
+            }
+            return line;
+          })
+          .join('\n\n');
+      }
+
+      const totalCount = todayAlarms.length + todayEvents.length;
+      text += `\n\n━━━━━━━━━━━━━━━━━━━━\n총 <b>${totalCount}건</b> (알림 ${todayAlarms.length}, 이벤트 ${todayEvents.length})`;
 
       try {
         await this.botService.sendMessage(chatId, text);
         this.logger.log(
-          `[DAILY SUMMARY] Sent to chatId: ${chatId} (${todayItems.length} items)`,
+          `[DAILY SUMMARY] Sent to chatId: ${chatId} (alarms: ${todayAlarms.length}, events: ${todayEvents.length})`,
         );
       } catch (error) {
         this.logger.error(
@@ -335,6 +361,23 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
     return false;
   }
 
+  private isDateToday(date: Date, kstNow: Date): boolean {
+    const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+    return (
+      kst.getUTCFullYear() === kstNow.getUTCFullYear() &&
+      kst.getUTCMonth() === kstNow.getUTCMonth() &&
+      kst.getUTCDate() === kstNow.getUTCDate()
+    );
+  }
+
+  private formatHHmm(time: string): string {
+    const [hourStr, minuteStr] = time.split(':');
+    const h = Number(hourStr);
+    const ampm = h < 12 ? '오전' : '오후';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${ampm} ${h12}:${minuteStr}`;
+  }
+
   private truncateStr(str: string, max: number): string {
     const oneLine = str.replace(/\n/g, ' ');
     return oneLine.length > max ? oneLine.slice(0, max) + '…' : oneLine;
@@ -366,11 +409,13 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       enabled: true,
       cron: dto.cron ?? null,
       scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
+      eventTime: (dto.eventTime as string) ?? null,
+      description: (dto.description as string) ?? null,
     });
 
     if (schedule.type === 'fixed') {
       this.startCronJob(schedule);
-    } else {
+    } else if (schedule.type === 'manual') {
       this.startTimer(schedule);
     }
 
@@ -393,6 +438,24 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
         s.scheduledAt.getTime() <= Date.now()
       ) {
         return false;
+      }
+      if (s.type === 'event' && s.scheduledAt) {
+        const now = new Date();
+        const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+        const kstScheduled = new Date(
+          s.scheduledAt.getTime() + 9 * 60 * 60 * 1000,
+        );
+        const todayKst = Date.UTC(
+          kstNow.getUTCFullYear(),
+          kstNow.getUTCMonth(),
+          kstNow.getUTCDate(),
+        );
+        const eventKst = Date.UTC(
+          kstScheduled.getUTCFullYear(),
+          kstScheduled.getUTCMonth(),
+          kstScheduled.getUTCDate(),
+        );
+        if (eventKst !== todayKst) return false;
       }
       return true;
     });

@@ -19,6 +19,7 @@ export class ScheduleBotUpdate {
 
     const fixed = all.filter((s) => s.type === 'fixed');
     const manual = all.filter((s) => s.type === 'manual');
+    const events = all.filter((s) => s.type === 'event');
 
     let text = `📋 <b>알림 스케줄 목록</b> (총 ${all.length}개)`;
 
@@ -30,6 +31,11 @@ export class ScheduleBotUpdate {
     if (manual.length > 0) {
       text += `\n\n━━━━━━━━━━━━━━━━━━━━\n📌 <b>일회성 알림</b> (${manual.length}개)\n━━━━━━━━━━━━━━━━━━━━\n\n`;
       text += this.formatList(manual);
+    }
+
+    if (events.length > 0) {
+      text += `\n\n━━━━━━━━━━━━━━━━━━━━\n🗓 <b>이벤트</b> (${events.length}개)\n━━━━━━━━━━━━━━━━━━━━\n\n`;
+      text += this.formatList(events);
     }
 
     await ctx.reply(text, { parse_mode: 'HTML' });
@@ -67,23 +73,65 @@ export class ScheduleBotUpdate {
     await ctx.reply(text, { parse_mode: 'HTML' });
   }
 
+  @Command('events')
+  async onEvents(@Ctx() ctx: Context): Promise<void> {
+    const chatId = String(ctx.chat!.id);
+    const events = await this.scheduleService.findAll('event', chatId);
+
+    if (events.length === 0) {
+      await ctx.reply('📭 등록된 이벤트가 없습니다.');
+      return;
+    }
+
+    let text = `🗓 <b>이벤트 목록</b> (${events.length}개)\n\n`;
+    text += events
+      .map((s) => {
+        const status = s.enabled ? '✅' : '⏸';
+        const dateStr = this.formatDateOnly(s.scheduledAt!);
+        return `${status} <b>${s.name}</b>\n   📅 ${dateStr}`;
+      })
+      .join('\n\n');
+
+    await ctx.reply(text, { parse_mode: 'HTML' });
+  }
+
   private formatList(schedules: ScheduledNotificationEntity[]): string {
     return schedules
       .map((s) => {
         const status = s.enabled ? '✅' : '⏸';
         let time: string;
         if (s.type === 'fixed') {
-          time = `⏰ ${this.describeCron(s.cron!)}`;
+          const dayStr = this.describeCronDay(s.cron!);
+          if (s.eventTime) {
+            const evTime = this.formatEventTime(s.eventTime);
+            time = `⏰ ${dayStr} ${evTime}`;
+          } else {
+            time = `⏰ ${this.describeCron(s.cron!)}`;
+          }
+        } else if (s.type === 'event') {
+          time = `📅 ${this.formatDateOnly(s.scheduledAt!)}`;
         } else {
-          const dateStr = this.formatDate(s.scheduledAt!);
-          const remaining = this.formatRemaining(s.scheduledAt!);
-          time = remaining
-            ? `📅 ${dateStr}\n   ⏳ ${remaining}`
-            : `📅 ${dateStr}`;
+          if (s.eventTime) {
+            const dateStr = this.formatDateOnly(s.scheduledAt!);
+            const evTime = this.formatEventTime(s.eventTime);
+            time = `📅 ${dateStr} ${evTime}`;
+          } else {
+            const dateStr = this.formatDate(s.scheduledAt!);
+            const remaining = this.formatRemaining(s.scheduledAt!);
+            time = remaining
+              ? `📅 ${dateStr}\n   ⏳ ${remaining}`
+              : `📅 ${dateStr}`;
+          }
         }
-        return `${status} <b>${s.name}</b>\n   ${time}\n   💬 ${this.truncate(s.message, 50)}`;
+        return `${status} <b>${s.name}</b>\n   ${time}`;
       })
       .join('\n\n');
+  }
+
+  private describeCronDay(cron: string): string {
+    const parts = cron.trim().split(/\s+/);
+    if (parts.length < 5) return cron;
+    return this.describeDayOfWeek(parts[4]);
   }
 
   private describeCron(cron: string): string {
@@ -132,6 +180,14 @@ export class ScheduleBotUpdate {
     return name ? `매주 ${name}요일` : field;
   }
 
+  private formatDateOnly(date: Date): string {
+    const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    const day = dayNames[kst.getUTCDay()];
+    return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} (${day})`;
+  }
+
   private formatDate(date: Date): string {
     const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -145,6 +201,14 @@ export class ScheduleBotUpdate {
     const minute = kst.getUTCMinutes();
 
     return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} (${day}) ${ampm} ${h12}:${pad(minute)}`;
+  }
+
+  private formatEventTime(eventTime: string): string {
+    const [hourStr, minuteStr] = eventTime.split(':');
+    const h = Number(hourStr);
+    const ampm = h < 12 ? '오전' : '오후';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${ampm} ${h12}:${minuteStr}`;
   }
 
   private formatRemaining(date: Date): string | null {

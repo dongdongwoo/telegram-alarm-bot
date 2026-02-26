@@ -40,4 +40,20 @@ export class UpdateScheduleDto {
   @IsBoolean()
   @IsOptional()
   enabled?: boolean;
+
+  @ApiPropertyOptional({
+    description: '실제 이벤트 시각 (HH:mm)',
+    example: '09:00',
+  })
+  @IsString()
+  @IsOptional()
+  eventTime?: string;
+
+  @ApiPropertyOptional({
+    description: '목록/요약에 표시할 설명',
+    example: '주간회의 시간입니다.',
+  })
+  @IsString()
+  @IsOptional()
+  description?: string;
 }

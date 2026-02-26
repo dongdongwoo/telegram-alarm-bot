@@ -11,7 +11,7 @@ export class ScheduledNotificationEntity {
   id: string;
 
   @Column({ type: 'varchar', length: 10 })
-  type: 'fixed' | 'manual';
+  type: 'fixed' | 'manual' | 'event';
 
   @Column({ type: 'varchar', length: 255 })
   name: string;
@@ -33,4 +33,10 @@ export class ScheduledNotificationEntity {
 
   @Column({ type: 'timestamptz', nullable: true })
   scheduledAt: Date | null;
+
+  @Column({ type: 'varchar', length: 5, nullable: true })
+  eventTime: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  description: string | null;
 }
